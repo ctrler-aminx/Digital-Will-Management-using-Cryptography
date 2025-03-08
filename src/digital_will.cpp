@@ -1,47 +1,105 @@
+#include "encryption.h"
 #include <iostream>
 #include <fstream>
 #include <string>
-#include "encryption.h"
+#include "networking.h"
 
 using namespace std;
 
+// Function to connect to CA and verify user
+bool verifyUserWithCA(const string& aadhar) {
+    string publicKey;
+    if (!requestPublicKeyFromCA(aadhar, publicKey)) {
+        cout << "CA verification failed.\n";
+        return false;
+    }
+
+    cout << "CA Verification successful. Public Key received.\n";
+    ofstream file("public_keys.txt", ios::app);
+    file << aadhar << "|" << publicKey << "\n";
+    file.close();
+    return true;
+}
+
+// Function to register a new user
 void registerUser() {
-    string name, aadhar, property, beneficiary1, beneficiary2;
+    string name, aadhar;
     cout << "\n======= Digital Will Registration =======\n";
     cout << "Enter Name: "; getline(cin, name);
-    cout << "Enter Aadhar Number: "; getline(cin, aadhar);
-    cout << "Enter Property Details: "; getline(cin, property);
-    cout << "Enter Beneficiary 1: "; getline(cin, beneficiary1);
-    cout << "Enter Beneficiary 2: "; getline(cin, beneficiary2);
-    
-    // Hash and sign Aadhar number
+    cout << "Enter Aadhar Number (12 digits): "; getline(cin, aadhar);
+
+    // Hash and sign Aadhar number for secure verification
     string hashedAadhar = sha256(aadhar);
     string signedAadhar = signData(hashedAadhar, "keys/private.pem");
-    
-    // Store encrypted details in file
+
+    if (!verifyUserWithCA(aadhar)) {
+        cout << "Registration failed: CA verification unsuccessful.\n";
+        return;
+    }
+
+    // Store user data securely
     ofstream file("users.txt", ios::app);
-    file << name << "|" << signedAadhar << "|" << property << "|" << beneficiary1 << "|" << beneficiary2 << endl;
+    file << name << "|" << aadhar << "|" << signedAadhar << "\n";
     file.close();
-    
+
     cout << "User registered successfully!\n";
 }
 
+// Function to log in a user
+void loginUser() {
+    string aadhar;
+    cout << "\n======= Digital Will Login =======\n";
+    cout << "Enter Aadhar Number (12 digits): "; getline(cin, aadhar);
+
+    // Hash the Aadhar number for verification
+    string hashedAadhar = sha256(aadhar);
+    string signedAadhar = signData(hashedAadhar, "keys/private.pem");
+
+    // Read stored user data for verification
+    ifstream file("users.txt");
+    string line;
+    bool userFound = false;
+
+    while (getline(file, line)) {
+        string storedName, storedAadhar, storedSignedHash;
+        size_t pos1 = line.find("|");
+        size_t pos2 = line.find("|", pos1 + 1);
+        storedName = line.substr(0, pos1);
+        storedAadhar = line.substr(pos1 + 1, pos2 - pos1 - 1);
+        storedSignedHash = line.substr(pos2 + 1);
+
+        if (storedAadhar == aadhar && storedSignedHash == signedAadhar) {
+            userFound = true;
+            cout << "Login successful! Welcome, " << storedName << "\n";
+            break;
+        }
+    }
+
+    if (!userFound) {
+        cout << "Login failed! Incorrect credentials.\n";
+    }
+}
+
 int main() {
-    generateRSAKeyPair();  // Ensure keys exist before proceeding
+    generateRSAKeyPair(); // Ensure RSA keys are generated before user actions
 
     int choice;
     cout << "\n======= Digital Will Management System (DWMS) =======\n";
-    cout << "1. Register User\n2. Exit\nEnter choice: ";
+    cout << "1. Register User\n2. Login\n3. Exit\nEnter choice: ";
     cin >> choice;
-    cin.ignore(); // Clear input buffer
-    
+    cin.ignore();
+
     if (choice == 1)
         registerUser();
+    else if (choice == 2)
+        loginUser();
     else
         cout << "Exiting...\n";
-    
+
     return 0;
 }
+
+
 /*// digital_will.cpp - Main file for Digital Will Management System (DWMS)
 #include <iostream>
 #include <fstream>

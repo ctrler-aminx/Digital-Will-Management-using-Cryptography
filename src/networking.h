@@ -6,4 +6,7 @@
 void startServer(int port);
 void connectToServer(const std::string &serverIP, int port);
 
-#endif
+// Added missing function declaration
+bool requestPublicKeyFromCA(const std::string& aadhar, std::string& publicKey);
+
+#endif // NETWORKING_H
