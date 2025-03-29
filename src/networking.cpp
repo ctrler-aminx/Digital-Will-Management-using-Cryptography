@@ -81,25 +81,41 @@ bool requestPublicKeyFromCA(const string& aadhar, string& publicKey) {
     serverAddr.sin_port = htons(8081); // CA Server Port
     serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
+    // Connect to CA
     if (connect(sock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
         cerr << "Connection to CA failed." << endl;
         close(sock);
         return false;
     }
 
+    // Send Aadhar to CA
     send(sock, aadhar.c_str(), aadhar.size(), 0);
 
-    char buffer[1024] = {0};
-    recv(sock, buffer, sizeof(buffer), 0);
-    publicKey = string(buffer);
+    // Read the public key from CA (multi-line public key handling)
+    char buffer[4096];  // Increased buffer size for large keys
+    int bytesReceived;
+    publicKey = "";
+
+    // Read in a loop to capture all data (handle multi-line public key)
+    while ((bytesReceived = recv(sock, buffer, sizeof(buffer) - 1, 0)) > 0) {
+        buffer[bytesReceived] = '\0';  // Null-terminate the buffer
+        publicKey += string(buffer);
+        
+        // Break if public key end detected (optional safeguard for PEM keys)
+        if (publicKey.find("-----END PUBLIC KEY-----") != string::npos) {
+            break;
+        }
+    }
 
     close(sock);
 
-    if (!publicKey.empty()) {
-        cout << "Public Key received from CA: " << publicKey << "\n";
+    // Check if publicKey is valid and contains expected PEM format PRINTING PUBLIC KEY:)
+    if (!publicKey.empty() && publicKey.find("-----BEGIN PUBLIC KEY-----") != string::npos) {
+       // cout << " Public Key received from CA:\n" << publicKey << "\n";  // ✅ Print full key correctly
         return true;
     } else {
-        cerr << "Failed to retrieve public key from CA." << endl;
+        cerr << " Failed to retrieve public key from CA." << endl;
         return false;
     }
 }
+

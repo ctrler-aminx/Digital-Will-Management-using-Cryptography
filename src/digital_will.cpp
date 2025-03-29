@@ -2,58 +2,75 @@
 #include <iostream>
 #include <fstream>
 #include <string>
+#include <openssl/bio.h>
+#include <openssl/buffer.h>
+#include <openssl/evp.h>
 #include "networking.h"
 
 using namespace std;
 
-// Function to connect to CA and verify user
-bool verifyUserWithCA(const string& aadhar) {
-    string publicKey;
+// ======== Function to connect to CA and fetch public key ========
+bool getPublicKeyFromCA(const string& aadhar, string& publicKey) {
     if (!requestPublicKeyFromCA(aadhar, publicKey)) {
-        cout << "CA verification failed.\n";
+        cout << "CA connection failed. Could not retrieve public key.\n";
         return false;
     }
 
-    cout << "CA Verification successful. Public Key received.\n";
-    ofstream file("public_keys.txt", ios::app);
-    file << aadhar << "|" << publicKey << "\n";
-    file.close();
     return true;
 }
 
-// Function to register a new user
+// ======== Function to register a new user ========
 void registerUser() {
     string name, aadhar;
     cout << "\n======= Digital Will Registration =======\n";
-    cout << "Enter Name: "; getline(cin, name);
-    cout << "Enter Aadhar Number (12 digits): "; getline(cin, aadhar);
+    cout << "Enter Name: ";
+    getline(cin, name);
+    cout << "Enter Aadhar Number (12 digits): ";
+    getline(cin, aadhar);
 
     // Hash and sign Aadhar number for secure verification
     string hashedAadhar = sha256(aadhar);
     string signedAadhar = signData(hashedAadhar, "keys/private.pem");
 
-    if (!verifyUserWithCA(aadhar)) {
-        cout << "Registration failed: CA verification unsuccessful.\n";
+    // Encode signed data using Base64 before storing
+    string encodedSignedAadhar = base64Encode(signedAadhar);
+
+    string publicKey;
+    if (!getPublicKeyFromCA(aadhar, publicKey)) {
+        cout << "Registration failed: Could not fetch public key from CA.\n";
         return;
     }
 
-    // Store user data securely
+    // Encode the public key using Base64 before storing
+    string encodedPublicKey = base64Encode(publicKey);
+
+    // Store user data securely (Base64-encoded signed Aadhar and public key)
     ofstream file("users.txt", ios::app);
-    file << name << "|" << aadhar << "|" << signedAadhar << "\n";
+    file << name << "|" << aadhar << "|" << encodedSignedAadhar << "\n";
     file.close();
 
-    cout << "User registered successfully!\n";
+    // Store public key for future use
+    ofstream pubFile("public_keys.txt", ios::app);
+    pubFile << aadhar << "|" << encodedPublicKey << "\n";
+    pubFile.close();
+
+    cout << name<<", you are registered successfully!\n Your Aadhar number is: "<<aadhar<<endl;
+    Public key stored.\n";
 }
 
-// Function to log in a user
+// ======== Function to log in a user ========
 void loginUser() {
     string aadhar;
     cout << "\n======= Digital Will Login =======\n";
-    cout << "Enter Aadhar Number (12 digits): "; getline(cin, aadhar);
+    cout << "Enter Aadhar Number (12 digits): ";
+    getline(cin, aadhar);
 
     // Hash the Aadhar number for verification
     string hashedAadhar = sha256(aadhar);
     string signedAadhar = signData(hashedAadhar, "keys/private.pem");
+
+    // Encode signed data using Base64 for comparison
+    string encodedSignedAadhar = base64Encode(signedAadhar);
 
     // Read stored user data for verification
     ifstream file("users.txt");
@@ -68,7 +85,10 @@ void loginUser() {
         storedAadhar = line.substr(pos1 + 1, pos2 - pos1 - 1);
         storedSignedHash = line.substr(pos2 + 1);
 
-        if (storedAadhar == aadhar && storedSignedHash == signedAadhar) {
+        // Decode stored signed hash before comparison
+        string decodedStoredSignedHash = base64Decode(storedSignedHash);
+
+        if (storedAadhar == aadhar && decodedStoredSignedHash == signedAadhar) {
             userFound = true;
             cout << "Login successful! Welcome, " << storedName << "\n";
             break;
@@ -80,8 +100,9 @@ void loginUser() {
     }
 }
 
+// ======== Main Function ========
 int main() {
-    generateRSAKeyPair(); // Ensure RSA keys are generated before user actions
+    generateRSAKeyPair("keys/private.pem", "keys/public.pem");
 
     int choice;
     cout << "\n======= Digital Will Management System (DWMS) =======\n";

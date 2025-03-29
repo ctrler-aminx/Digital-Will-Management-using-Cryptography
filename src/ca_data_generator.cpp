@@ -6,7 +6,8 @@
 using namespace std;
 
 void generateCAData() {
-    ofstream file("ca/ca_data.txt", ios::app); // Append mode to avoid overwriting existing data
+    // Clear data before writing new entries
+    ofstream file("ca/ca_data.txt", ios::trunc); // `ios::trunc` clears the file
     if (!file) {
         cerr << "Error creating CA data file!\n";
         return;
@@ -30,15 +31,14 @@ void generateCAData() {
     string aadharNumbers[100];
     for (int i = 0; i < 100; ++i) {
         aadharNumbers[i] = std::string("1234567890") + (i < 10 ? "0" : "") + to_string(i + 1);
-
     }
 
-    // Generate keys for entries starting from 11 (to avoid duplicates)
-    for (int i = 10; i < 100; ++i) {
+    // Generate keys for 100 entries
+    for (int i = 0; i < 100; ++i) {
         string privateKeyPath = "keys/private_" + to_string(i + 1) + ".pem";
         string publicKeyPath = "keys/public_" + to_string(i + 1) + ".pem";
 
-        generateRSAKeyPair(privateKeyPath, publicKeyPath);  // Create new keys only for entries 11 onward
+        generateRSAKeyPair(privateKeyPath, publicKeyPath);
 
         ifstream pubKeyFile(publicKeyPath);
         string publicKey((istreambuf_iterator<char>(pubKeyFile)), istreambuf_iterator<char>());
@@ -50,6 +50,7 @@ void generateCAData() {
     file.close();
     cout << "100 sample entries created successfully in ca_data.txt" << endl;
 }
+
 
 int main() {
     generateCAData();
