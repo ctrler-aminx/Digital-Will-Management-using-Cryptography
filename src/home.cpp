@@ -11,9 +11,12 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include "networking.h"
 #include <cstring>
 #include <sys/stat.h>
 
+
+string loggedInAadhar;
 #define CA_IP "127.0.0.1"   // CA runs on localhost for now
 #define CA_PORT 8081        // Port for CA communication
 
@@ -28,52 +31,15 @@ void createUserDirectory(const string& path) {
     string command = "mkdir -p " + path;
     system(command.c_str());
 }
+
 bool getPublicKeyFromCA(const string& aadhar, string& publicKey) {
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) {
-        cerr << "Error: Failed to create socket.\n";
+    if (!requestPublicKeyFromCA(aadhar, publicKey)) {
+        cerr << "CA connection failed. Could not retrieve public key.\n";
         return false;
     }
-
-    sockaddr_in serverAddr;
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(CA_PORT);
-    inet_pton(AF_INET, CA_IP, &serverAddr.sin_addr);
-
-    // Connect to CA
-    if (connect(sock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
-        cerr << "Error: Could not connect to CA.\n";
-        close(sock);
-        return false;
-    }
-    string request = "GET_PUBLIC_KEY|" + aadhar;
-    send(sock, request.c_str(), request.size(), 0);
-    char buffer[4096];
-    memset(buffer, 0, sizeof(buffer));
-    int bytesReceived = recv(sock, buffer, sizeof(buffer) - 1, 0);
-    if (bytesReceived <= 0) {
-        cerr << "Error: Failed to receive public key from CA.\n";
-        close(sock);
-        return false;
-    }
-
-    publicKey = string(buffer);
-    cout << "\nPublic key retrieved for Aadhar number " << aadhar << endl;
-    cout << publicKey << "\n";
-    close(sock);
     return true;
 }
 
-string loggedInAadhar; 
-string encryptAES(const string& plainText, const string& key) {
-    return "ENCRYPTED_" + plainText; 
-}
-string decryptAES(const string& encryptedText, const string& key) {
-    if (encryptedText.find("ENCRYPTED_") == 0) {
-        return encryptedText.substr(10); 
-    }
-    return "ERROR: Invalid encrypted data!";
-}
 void registerBeneficiaries(bool isNew = true) {
     int numRelatives;
     cout << "\nHow many beneficiaries do you want to add? ";
@@ -92,33 +58,49 @@ void registerBeneficiaries(bool isNew = true) {
         getline(cin, relativeAadhar);
 
         string relativeDirPath = relativeDir + relativeAadhar;
+
         if (directoryExists(relativeDirPath)) {
             cout << "Beneficiary with Aadhar " << relativeAadhar << " is already registered!\n";
             continue;
         }
+
+        string hashedAadhar = sha256(relativeAadhar);
+        string signedAadhar = signData(hashedAadhar, "keys/private.pem");
+        string encodedSignedAadhar = base64Encode(signedAadhar);
+
         string publicKey;
         if (!getPublicKeyFromCA(relativeAadhar, publicKey)) {
             cout << "Failed to fetch public key from CA for " << relativeName << ". Skipping registration.\n";
             continue;
         }
+
         createUserDirectory(relativeDirPath);
-        ofstream relativeFile(relativeDirPath + "/relative.txt");
-        relativeFile << relativeName << "|" << relativeAadhar << "\n";
-        relativeFile.close();
+
+        // Store hashed Aadhar
+        ofstream hashFile(relativeDirPath + "/hashed_aadhar.txt");
+        if (!hashFile) {
+            cerr << "Error: Could not create hash file.\n";
+            return;
+        }
+        hashFile << hashedAadhar;
+        hashFile.close();
+
+        // Store public key
         string encodedPublicKey = base64Encode(publicKey);
-        ofstream pubKeyFile(relativeDirPath + "/public_key.txt");
-        pubKeyFile << encodedPublicKey << "\n";
-        pubKeyFile.close();
+        ofstream pubFile(relativeDirPath + "/public_key.txt");
+        if (!pubFile) {
+            cerr << "Error: Could not create public key file.\n";
+            return;
+        }
+        pubFile << relativeAadhar << "|" << encodedPublicKey << "\n";
+        pubFile.close();
 
-        cout << "Beneficiary " << relativeName << " registered successfully. Public key stored securely.\n";
-    }
-
-    if (isNew) {
-        cout << "All beneficiaries have been registered successfully!\n";
-    } else {
-        cout << "Beneficiaries have been added successfully!\n";
+        cout << "Beneficiary " << relativeName << " registered successfully. Public key stored securely.\n"<<endl;
+        cout<< "The Public Key received from CA of "<<relativeAadhar<<" is "<<endl;
+        cout<<publicKey<<endl;
     }
 }
+
 void createWill() {
     registerBeneficiaries();
     cout << "Redirecting to will creation and encryption...\n";
@@ -128,28 +110,37 @@ void createWill() {
 void viewWill() {
     string willFile = "data/" + loggedInAadhar + "/will.txt";
     string keyFile = "data/" + loggedInAadhar + "/aes_key.txt";
+    string ivFile = "data/" + loggedInAadhar + "/aes_iv.txt";  // Add IV file
 
     ifstream willStream(willFile);
     ifstream keyStream(keyFile);
+    ifstream ivStream(ivFile);  // Open IV file
 
-    if (!willStream || !keyStream) {
+    if (!willStream || !keyStream || !ivStream) {  // Check IV file as well
         cout << "No will found. Please create a will first.\n";
         return;
     }
 
-    string encryptedWill, aesKey;
+    string encryptedWill, aesKey, aesIv;
     getline(willStream, encryptedWill);
     getline(keyStream, aesKey);
-    string decryptedWill = decryptAES(encryptedWill, aesKey);
+    getline(ivStream, aesIv);  // Read IV
+
+    string decryptedWill = decryptAES(encryptedWill, (const unsigned char*)aesKey.c_str(), (const unsigned char*)aesIv.c_str());
+
     cout << "\n======= Decrypted Will Content =======\n";
     cout << decryptedWill << "\n";
 }
+
 void editWill() {
     string willFile = "data/" + loggedInAadhar + "/will.txt";
     string keyFile = "data/" + loggedInAadhar + "/aes_key.txt";
+    string ivFile = "data/" + loggedInAadhar + "/aes_iv.txt";  // Add IV file
 
     ifstream keyStream(keyFile);
-    if (!keyStream) {
+    ifstream ivStream(ivFile);  // Open IV file
+
+    if (!keyStream || !ivStream) {  // Check IV file as well
         cout << "No will found. Please create a will first.\n";
         return;
     }
@@ -157,18 +148,25 @@ void editWill() {
     string newWillContent;
     cout << "\nEnter updated content for the will: ";
     getline(cin, newWillContent);
-    string aesKey;
+
+    string aesKey, aesIv;
     getline(keyStream, aesKey);
-    string encryptedWill = encryptAES(newWillContent, aesKey);
+    getline(ivStream, aesIv);  // Read IV
+
+    string encryptedWill = encryptAES(newWillContent, (const unsigned char*)aesKey.c_str(), (const unsigned char*)aesIv.c_str());
+
     ofstream willStream(willFile);
     willStream << encryptedWill;
     willStream.close();
 
     cout << "Will updated and encrypted successfully!\n";
 }
+
+
 void addMoreBeneficiaries() {
     registerBeneficiaries(false); 
 }
+
 void showHomePage() {
     int choice;
 
@@ -183,6 +181,7 @@ void showHomePage() {
         cout << "Enter your choice: ";
         cin >> choice;
         cin.ignore(); 
+
         switch (choice) {
         case 1:
             createWill();
@@ -210,6 +209,9 @@ void showHomePage() {
         }
     } while (choice != 6);
 }
+
+
+
 int main(int argc, char* argv[]) {
     if (argc != 2) {
         cout << "Error: Aadhar number not provided to home.\n";

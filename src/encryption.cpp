@@ -8,6 +8,8 @@
 #include <openssl/sha.h>
 #include <openssl/bn.h>
 #include <openssl/bio.h>
+#include <openssl/rand.h>
+#include <openssl/aes.h>
 #include <openssl/buffer.h>
 
 using namespace std;
@@ -23,9 +25,7 @@ string base64Encode(const string &data) {
     BIO* bmem = BIO_new(BIO_s_mem());
     bio = BIO_push(bio, bmem);
 
-    // Disable newline for base64
     BIO_set_flags(bio, BIO_FLAGS_BASE64_NO_NL);
-
     BIO_write(bio, data.c_str(), data.length());
     BIO_flush(bio);
 
@@ -43,7 +43,6 @@ string base64Decode(const string &data) {
     BIO* b64 = BIO_new(BIO_f_base64());
     bio = BIO_push(b64, bio);
 
-    // Disable newline for base64
     BIO_set_flags(bio, BIO_FLAGS_BASE64_NO_NL);
 
     char buffer[512];
@@ -54,8 +53,7 @@ string base64Decode(const string &data) {
 }
 
 // ======== Generate RSA Key Pair using OpenSSL EVP API ========
-void generateRSAKeyPair(const string& privateKeyPath = "keys/private.pem",
-    const string& publicKeyPath = "keys/public.pem") {
+void generateRSAKeyPair(const string& privateKeyPath, const string& publicKeyPath) {
     if (fileExists(privateKeyPath) && fileExists(publicKeyPath)) {
         cout << "Keys already exist. Skipping generation.\n";
         return;
@@ -67,11 +65,6 @@ void generateRSAKeyPair(const string& privateKeyPath = "keys/private.pem",
     RSA* rsa = RSA_new();
     BIGNUM* e = BN_new();
 
-    if (!pkey || !rsa || !e) {
-        cerr << "Error allocating memory for RSA key pair!\n";
-        return;
-    }
-
     BN_set_word(e, RSA_F4);
     if (RSA_generate_key_ex(rsa, 2048, e, nullptr) != 1) {
         cerr << "Error generating RSA key!\n";
@@ -80,18 +73,10 @@ void generateRSAKeyPair(const string& privateKeyPath = "keys/private.pem",
     EVP_PKEY_assign_RSA(pkey, rsa);
 
     FILE* privFile = fopen(privateKeyPath.c_str(), "wb");
-    if (!privFile) {
-        cerr << "Error creating private key file!\n";
-        return;
-    }
     PEM_write_PrivateKey(privFile, pkey, nullptr, nullptr, 0, nullptr, nullptr);
     fclose(privFile);
 
     FILE* pubFile = fopen(publicKeyPath.c_str(), "wb");
-    if (!pubFile) {
-        cerr << "Error creating public key file!\n";
-        return;
-    }
     PEM_write_PUBKEY(pubFile, pkey);
     fclose(pubFile);
 
@@ -108,7 +93,7 @@ string sha256(const string &data) {
     return base64Encode(string(reinterpret_cast<char*>(hash), SHA256_DIGEST_LENGTH));
 }
 
-// ======== Load RSA Private Key using EVP API ========
+// ======== Load RSA Private Key ========
 EVP_PKEY* loadPrivateKey(const string &filename) {
     FILE* file = fopen(filename.c_str(), "r");
     if (!file) {
@@ -116,6 +101,18 @@ EVP_PKEY* loadPrivateKey(const string &filename) {
         return nullptr;
     }
     EVP_PKEY* pkey = PEM_read_PrivateKey(file, nullptr, nullptr, nullptr);
+    fclose(file);
+    return pkey;
+}
+
+// ======== Load RSA Public Key ========
+EVP_PKEY* loadPublicKey(const string &filename) {
+    FILE* file = fopen(filename.c_str(), "r");
+    if (!file) {
+        cerr << "Error opening public key file!" << endl;
+        return nullptr;
+    }
+    EVP_PKEY* pkey = PEM_read_PUBKEY(file, nullptr, nullptr, nullptr);
     fclose(file);
     return pkey;
 }
@@ -168,29 +165,144 @@ string signData(const string &data, const string &keyFile) {
     return encodedSignature;
 }
 
-// ======== Encrypt Data with RSA Private Key ========
-string encryptWithPrivateKey(const string &data, const string &keyFile) {
-    RSA* rsa = RSA_new();
-    FILE* file = fopen(keyFile.c_str(), "r");
-    if (!file) {
-        cerr << "Error opening private key file!" << endl;
-        return "";
-    }
-    rsa = PEM_read_RSAPrivateKey(file, nullptr, nullptr, nullptr);
-    fclose(file);
+// ======== Encrypt with Public Key ========
+string encryptWithPublicKey(const string &data, const string &keyFile) {
+    EVP_PKEY* pkey = loadPublicKey(keyFile);
+    if (!pkey) return "";
 
-    unsigned char encrypted[256];
-    int encryptedLength = RSA_private_encrypt(
-        data.length(),
-        reinterpret_cast<const unsigned char*>(data.c_str()),
-        encrypted, rsa, RSA_PKCS1_PADDING
-    );
-
-    RSA_free(rsa);
-    if (encryptedLength == -1) {
-        cerr << "Error during encryption!" << endl;
+    EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(pkey, nullptr);
+    if (!ctx) {
+        cerr << "Error creating context for encryption." << endl;
+        EVP_PKEY_free(pkey);
         return "";
     }
 
-    return base64Encode(string(reinterpret_cast<char*>(encrypted), encryptedLength));
+    if (EVP_PKEY_encrypt_init(ctx) <= 0) {
+        cerr << "Error initializing encryption." << endl;
+        EVP_PKEY_CTX_free(ctx);
+        EVP_PKEY_free(pkey);
+        return "";
+    }
+
+    size_t outLen;
+    EVP_PKEY_encrypt(ctx, nullptr, &outLen, reinterpret_cast<const unsigned char*>(data.c_str()), data.size());
+
+    unsigned char* outData = new unsigned char[outLen];
+
+    if (EVP_PKEY_encrypt(ctx, outData, &outLen, reinterpret_cast<const unsigned char*>(data.c_str()), data.size()) <= 0) {
+        cerr << "Error encrypting data." << endl;
+        delete[] outData;
+        EVP_PKEY_CTX_free(ctx);
+        EVP_PKEY_free(pkey);
+        return "";
+    }
+
+    string encryptedData(reinterpret_cast<char*>(outData), outLen);
+    string encodedData = base64Encode(encryptedData);
+
+    delete[] outData;
+    EVP_PKEY_CTX_free(ctx);
+    EVP_PKEY_free(pkey);
+
+    return encodedData;
+}
+
+// ======== AES Key and IV Generation ========
+bool generateAESKeyAndIV(unsigned char *key, unsigned char *iv) {
+    if (!RAND_bytes(key, AES_BLOCK_SIZE) || !RAND_bytes(iv, AES_BLOCK_SIZE)) {
+        cerr << "Error generating AES key or IV." << endl;
+        return false;
+    }
+    return true;
+}
+
+// ======== Encrypt Data with AES ========
+string encryptAES(const string &data, const unsigned char *key, const unsigned char *iv) {
+    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+    EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), nullptr, key, iv);
+
+    int len;
+    int ciphertextLen;
+    unsigned char ciphertext[data.size() + AES_BLOCK_SIZE];
+
+    EVP_EncryptUpdate(ctx, ciphertext, &len, reinterpret_cast<const unsigned char*>(data.c_str()), data.size());
+    ciphertextLen = len;
+
+    EVP_EncryptFinal_ex(ctx, ciphertext + len, &len);
+    ciphertextLen += len;
+
+    EVP_CIPHER_CTX_free(ctx);
+
+    return base64Encode(string(reinterpret_cast<char*>(ciphertext), ciphertextLen));
+}
+
+// ======== Decrypt Data with AES ========
+string decryptAES(const string &data, const unsigned char *key, const unsigned char *iv) {
+    string decodedData = base64Decode(data);
+    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+    EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), nullptr, key, iv);
+
+    int len;
+    int plaintextLen;
+    unsigned char plaintext[decodedData.size() + AES_BLOCK_SIZE];
+
+    EVP_DecryptUpdate(ctx, plaintext, &len, reinterpret_cast<const unsigned char*>(decodedData.c_str()), decodedData.size());
+    plaintextLen = len;
+
+    EVP_DecryptFinal_ex(ctx, plaintext + len, &len);
+    plaintextLen += len;
+
+    EVP_CIPHER_CTX_free(ctx);
+
+    return string(reinterpret_cast<char*>(plaintext), plaintextLen);
+}
+
+// ======== Decrypt with Private Key ========
+string decryptWithPrivateKey(const string &data, const string &keyFile) {
+    EVP_PKEY* pkey = loadPrivateKey(keyFile);
+    if (!pkey) return "";
+
+    EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(pkey, nullptr);
+    if (!ctx) {
+        cerr << "Error creating context for decryption." << endl;
+        EVP_PKEY_free(pkey);
+        return "";
+    }
+
+    if (EVP_PKEY_decrypt_init(ctx) <= 0) {
+        cerr << "Error initializing decryption." << endl;
+        EVP_PKEY_CTX_free(ctx);
+        EVP_PKEY_free(pkey);
+        return "";
+    }
+
+    string decodedData = base64Decode(data);
+    size_t outLen;
+    
+    // Determine buffer length
+    if (EVP_PKEY_decrypt(ctx, nullptr, &outLen, reinterpret_cast<const unsigned char*>(decodedData.c_str()), decodedData.size()) <= 0) {
+        cerr << "Error determining buffer length for decryption." << endl;
+        EVP_PKEY_CTX_free(ctx);
+        EVP_PKEY_free(pkey);
+        return "";
+    }
+
+    unsigned char* outData = new unsigned char[outLen];
+
+    // Perform decryption
+    if (EVP_PKEY_decrypt(ctx, outData, &outLen, reinterpret_cast<const unsigned char*>(decodedData.c_str()), decodedData.size()) <= 0) {
+        cerr << "Error decrypting data." << endl;
+        delete[] outData;
+        EVP_PKEY_CTX_free(ctx);
+        EVP_PKEY_free(pkey);
+        return "";
+    }
+
+    string decryptedData(reinterpret_cast<char*>(outData), outLen);
+    delete[] outData;
+
+    EVP_PKEY_CTX_free(ctx);
+    EVP_PKEY_free(pkey);
+    
+    return decryptedData;
 }

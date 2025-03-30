@@ -18,14 +18,16 @@ bool directoryExists(const string& path) {
 
 // ======== Helper function to create user directory ========
 void createUserDirectory(const string& path) {
-    string command = "mkdir -p " + path;
-    system(command.c_str());
+    if (!directoryExists(path)) {
+        string command = "mkdir -p " + path;
+        system(command.c_str());
+    }
 }
 
 // ======== Function to connect to CA and fetch public key ========
 bool getPublicKeyFromCA(const string& aadhar, string& publicKey) {
     if (!requestPublicKeyFromCA(aadhar, publicKey)) {
-        cout << "CA connection failed. Could not retrieve public key.\n";
+        cerr << "CA connection failed. Could not retrieve public key.\n";
         return false;
     }
     return true;
@@ -69,16 +71,28 @@ void registerUser() {
 
     // Store user data securely in the user's directory
     ofstream userFile(userDir + "/user.txt");
+    if (!userFile) {
+        cerr << "Error: Could not create user file.\n";
+        return;
+    }
     userFile << name << "|" << aadhar << "|" << encodedSignedAadhar << "\n";
     userFile.close();
 
     // Store hashed Aadhar for future login verification
     ofstream hashFile(userDir + "/hashed_aadhar.txt");
+    if (!hashFile) {
+        cerr << "Error: Could not create hash file.\n";
+        return;
+    }
     hashFile << hashedAadhar;
     hashFile.close();
 
     // Store public key for future use
     ofstream pubFile(userDir + "/public_key.txt");
+    if (!pubFile) {
+        cerr << "Error: Could not create public key file.\n";
+        return;
+    }
     pubFile << aadhar << "|" << encodedPublicKey << "\n";
     pubFile.close();
 
@@ -107,8 +121,14 @@ void loginUser() {
 
     // Read stored hashed Aadhar from file
     ifstream hashFile(userDir + "/hashed_aadhar.txt");
+    if (!hashFile) {
+        cerr << "Error: Could not read hash file.\n";
+        return;
+    }
+
     string storedHashedAadhar;
     getline(hashFile, storedHashedAadhar);
+    hashFile.close();
 
     if (storedHashedAadhar == hashedAadhar) {
         ifstream userFile(userDir + "/user.txt");
@@ -121,7 +141,7 @@ void loginUser() {
         // ===== Launch home.cpp after successful login =====
         cout << "Redirecting to Home Page...\n";
         string command = "./bin/home " + aadhar;
-system(command.c_str());
+        system(command.c_str());
 
     } else {
         cout << "Stored Hash: " << storedHashedAadhar << endl;
@@ -152,6 +172,7 @@ void loginRelative() {
     size_t pos = line.find("|");
     storedName = line.substr(0, pos);
     storedAadhar = line.substr(pos + 1);
+    relativeFile.close();
 
     // Hash and verify relative's Aadhar
     string hashedRelativeAadhar = sha256(relativeAadhar);
@@ -163,7 +184,7 @@ void loginRelative() {
         // ===== Launch home.cpp after successful login =====
         cout << "Redirecting to Home Page...\n";
         string command = "./bin/home " + relativeAadhar;
-       system(command.c_str());
+        system(command.c_str());
 
     } else {
         cout << "Relative login failed! Incorrect credentials.\n";
@@ -172,7 +193,13 @@ void loginRelative() {
 
 // ======== Main Function ========
 int main() {
-    generateRSAKeyPair("keys/private.pem", "keys/public.pem");
+    // Check if keys already exist before regenerating them
+    if (!directoryExists("keys")) {
+        createUserDirectory("keys");
+    }
+    if (!directoryExists("keys/private.pem") || !directoryExists("keys/public.pem")) {
+        generateRSAKeyPair("keys/private.pem", "keys/public.pem");
+    }
 
     int choice;
     cout << "\n======= Digital Will Management System (DWMS) =======\n";

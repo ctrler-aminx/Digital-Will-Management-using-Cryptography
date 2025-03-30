@@ -5,11 +5,14 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <vector>
+#include <algorithm>
 
 using namespace std;
 
 // Retrieve public key from ca_data.txt for a valid user
-string getPublicKeyForAadhar(const string& hashedAadhar) {
+string getPublicKeyForAadhar(const string &hashedAadhar) {
     ifstream file("ca/ca_data.txt");
     if (!file) {
         cerr << "Error opening ca_data.txt!\n";
@@ -54,8 +57,7 @@ string getPublicKeyForAadhar(const string& hashedAadhar) {
     return ""; // No matching Aadhar found
 }
 
-
-// Start CA server on port 8081
+// Start CA server on port 8081 with support for multiple clients
 void startCA(int port) {
     int serverSock = socket(AF_INET, SOCK_STREAM, 0);
     if (serverSock == -1) {
@@ -69,133 +71,95 @@ void startCA(int port) {
     serverAddr.sin_port = htons(port);
 
     // Bind the socket to port 8081
-    if (bind(serverSock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
+    if (bind(serverSock, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) < 0) {
         cerr << "Bind failed!\n";
+        close(serverSock);
         return;
     }
 
-    listen(serverSock, 3);
+    // Set socket to listen for connections
+    listen(serverSock, 5);
     cout << "CA Server listening on port " << port << "...\n";
 
-    // Accept incoming connections
-    int clientSock;
-    sockaddr_in clientAddr;
-    socklen_t clientLen = sizeof(clientAddr);
-    clientSock = accept(serverSock, (struct sockaddr*)&clientAddr, &clientLen);
-    if (clientSock < 0) {
-        cerr << "Client connection failed!\n";
-        return;
-    }
+    // Set server socket to non-blocking mode
+    fcntl(serverSock, F_SETFL, O_NONBLOCK);
 
-    char buffer[1024] = {0};
-    read(clientSock, buffer, sizeof(buffer));
+    fd_set readfds;
+    vector<int> clientSockets; // Store multiple client sockets
 
-    // Get the public key if user is verified
-    string hashedAadhar(buffer);
-    string publicKey = getPublicKeyForAadhar(hashedAadhar);
+    while (true) {
+        FD_ZERO(&readfds);
+        FD_SET(serverSock, &readfds);
+        int maxSock = serverSock;
 
-    if (!publicKey.empty()) {
-        // Send public key if user is verified
-        cout<<"publicKey requested is of "<<hashedAadhar<<" is :"<<endl;
-        cout<<publicKey;
-        send(clientSock, publicKey.c_str(), publicKey.size(), 0);
-    } else {
-        // Send "Not Verified" if user not found
-        string response = "Not Verified";
-        send(clientSock, response.c_str(), response.size(), 0);
-    }
+        // Add existing client sockets to set
+        for (int clientSock : clientSockets) {
+            FD_SET(clientSock, &readfds);
+            if (clientSock > maxSock) {
+                maxSock = clientSock;
+            }
+        }
 
-    close(clientSock);
-    close(serverSock);
-}
+        // Wait for activity on sockets
+        int activity = select(maxSock + 1, &readfds, NULL, NULL, NULL);
 
-int main() {
-    startCA(8081); // Use port 8081 as per the system design
-    return 0;
-}
+        if (activity < 0 && errno != EINTR) {
+            cerr << "Select error!\n";
+            break;
+        }
 
+        // Handle new connection
+        if (FD_ISSET(serverSock, &readfds)) {
+            sockaddr_in clientAddr;
+            socklen_t clientLen = sizeof(clientAddr);
+            int newSock = accept(serverSock, (struct sockaddr *)&clientAddr, &clientLen);
+            if (newSock >= 0) {
+                cout << "New client connected!\n";
+                clientSockets.push_back(newSock);
+            }
+        }
 
-/*#include <iostream>
-#include <fstream>
-#include <string>
-#include <sstream>
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <unistd.h>
+        // Handle data from clients
+        vector<int> disconnectedSockets;
+        for (int clientSock : clientSockets) {
+            if (FD_ISSET(clientSock, &readfds)) {
+                char buffer[1024] = {0};
+                int bytesRead = read(clientSock, buffer, sizeof(buffer));
 
-using namespace std;
+                if (bytesRead == 0) {
+                    // Client disconnected
+                    cout << "Client disconnected.\n";
+                    disconnectedSockets.push_back(clientSock);
+                    close(clientSock);
+                } else {
+                    // Get the public key if user is verified
+                    string hashedAadhar(buffer);
+                    string publicKey = getPublicKeyForAadhar(hashedAadhar);
 
-// Verify user by checking hashed Aadhar in ca_data.txt
-bool verifyUser(const string &hashedAadhar) {
-    ifstream file("ca/ca_data.txt");
-    if (!file) {
-        cerr << "Error opening ca_data.txt!\n";
-        return false;
-    }
+                    if (!publicKey.empty()) {
+                        // Send public key if user is verified
+                        cout << "Public key requested for " << hashedAadhar << ":\n";
+                        cout << publicKey;
+                        send(clientSock, publicKey.c_str(), publicKey.size(), 0);
+                    } else {
+                        // Send "Not Verified" if user not found
+                        string response = "Not Verified";
+                        send(clientSock, response.c_str(), response.size(), 0);
+                    }
+                }
+            }
+        }
 
-    string line, serial, name, aadhar, publicKey;
-    while (getline(file, line)) {
-        stringstream ss(line);
-        getline(ss, serial, '|');
-        getline(ss, name, '|');
-        getline(ss, aadhar, '|');
-        getline(ss, publicKey, '|');
-
-        // Compare hashed Aadhar with the one from CA data
-        if (aadhar == hashedAadhar) {
-            cout << "User verified: " << name << " (" << aadhar << ")\n";
-            file.close();
-            return true;
+        // Remove disconnected clients from the list
+        for (int sock : disconnectedSockets) {
+            clientSockets.erase(remove(clientSockets.begin(), clientSockets.end(), sock), clientSockets.end());
         }
     }
 
-    file.close();
-    return false; // No match found
-}
-
-// Start CA server on port 8081
-void startCA(int port) {
-    int serverSock = socket(AF_INET, SOCK_STREAM, 0);
-    if (serverSock == -1) {
-        cerr << "Error creating socket!\n";
-        return;
+    // Close all sockets before exiting
+    for (int clientSock : clientSockets) {
+        close(clientSock);
     }
-
-    sockaddr_in serverAddr{};
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_addr.s_addr = INADDR_ANY;
-    serverAddr.sin_port = htons(port);
-
-    // Bind the socket to port 8081
-    if (bind(serverSock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
-        cerr << "Bind failed!\n";
-        return;
-    }
-
-    listen(serverSock, 3);
-    cout << "CA Server listening on port " << port << "...\n";
-
-    // Accept incoming connections
-    int clientSock;
-    sockaddr_in clientAddr;
-    socklen_t clientLen = sizeof(clientAddr);
-    clientSock = accept(serverSock, (struct sockaddr*)&clientAddr, &clientLen);
-    if (clientSock < 0) {
-        cerr << "Client connection failed!\n";
-        return;
-    }
-
-    char buffer[1024] = {0};
-    read(clientSock, buffer, sizeof(buffer));
-
-    // Check if user is verified
-    string hashedAadhar(buffer);
-    string response = verifyUser(hashedAadhar) ? "Verified" : "Not Verified";
-
-    // Send response to client
-    send(clientSock, response.c_str(), response.size(), 0);
-
-    close(clientSock);
     close(serverSock);
 }
 
@@ -203,4 +167,3 @@ int main() {
     startCA(8081); // Use port 8081 as per the system design
     return 0;
 }
-*/
