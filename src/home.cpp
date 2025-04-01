@@ -10,6 +10,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <limits>
 #include <unistd.h>
 #include "networking.h"
 #include <cstring>
@@ -155,32 +156,85 @@ encryptedWill = buffer.str();
 void editWill() {
     string willFile = "data/" + loggedInAadhar + "/will.txt";
     string keyFile = "data/" + loggedInAadhar + "/aes_key.txt";
-    string ivFile = "data/" + loggedInAadhar + "/aes_iv.txt";  // Add IV file
+    string ivFile = "data/" + loggedInAadhar + "/aes_iv.txt";
 
+    cout << "[DEBUG] Opening AES key and IV files...\n";
+    
     ifstream keyStream(keyFile);
-    ifstream ivStream(ivFile);  // Open IV file
-
-    if (!keyStream || !ivStream) {  // Check IV file as well
+    ifstream ivStream(ivFile);
+    
+    if (!keyStream || !ivStream) {
         cout << "No will found. Please create a will first.\n";
         return;
     }
 
-    string newWillContent;
-    cout << "\nEnter updated content for the will: ";
-    getline(cin, newWillContent);
-
     string aesKey, aesIv;
     getline(keyStream, aesKey);
-    getline(ivStream, aesIv);  // Read IV
+    getline(ivStream, aesIv);
 
-    string encryptedWill = encryptAES(newWillContent, (const unsigned char*)aesKey.c_str(), (const unsigned char*)aesIv.c_str());
+    keyStream.close();
+    ivStream.close();
 
-    ofstream willStream(willFile);
-    willStream << encryptedWill;
-    willStream.close();
+    cout << "[DEBUG] AES key and IV successfully loaded.\n";
 
+    // Read existing will content
+    string existingWillContent = "";
+    ifstream willStream(willFile);
+    if (willStream) {
+        string encryptedWill((istreambuf_iterator<char>(willStream)), istreambuf_iterator<char>());
+        willStream.close();
+
+        if (!encryptedWill.empty()) {
+            existingWillContent = decryptAES(encryptedWill, (const unsigned char*)aesKey.c_str(), (const unsigned char*)aesIv.c_str());
+
+            if (existingWillContent.empty()) {
+                cout << "[ERROR] Decryption failed! Existing will content could not be retrieved.\n";
+            }
+        }
+    }
+
+    cout << "[DEBUG] Successfully decrypted existing will content:\n" << existingWillContent << "\n";
+
+    // Get user input for additional content
+    string newWillContent, line;
+    cout << "\nEnter updated content for the will (type 'DONE' on a new line to finish):\n";
+
+    cin.ignore(numeric_limits<streamsize>::max(), '\n');  // Ensure buffer is cleared
+
+    while (true) {
+        getline(cin, line);
+        if (line == "DONE") break;
+        newWillContent += line + "\n"; 
+    }
+
+    cout << "[DEBUG] New user input received:\n" << newWillContent << "\n";
+
+    // Ensure new content is actually appended
+    string finalWillContent = existingWillContent + "\n" + newWillContent;
+
+    cout << "[DEBUG] Final combined will content:\n" << finalWillContent << "\n";
+
+    // Encrypt the combined will
+    string encryptedWill = encryptAES(finalWillContent, (const unsigned char*)aesKey.c_str(), (const unsigned char*)aesIv.c_str());
+
+    if (encryptedWill.empty()) {
+        cout << "[ERROR] Encryption failed! Will content is empty after encryption.\n";
+        return;
+    }
+
+    // Overwrite the file with the new encrypted will
+    ofstream outFile(willFile, ios::trunc);  // Ensure we overwrite the file
+    if (!outFile) {
+        cerr << "[ERROR] Unable to write to the will file.\n";
+        return;
+    }
+    outFile << encryptedWill;
+    outFile.close();
+
+    cout << "[DEBUG] Will successfully encrypted.\n";
     cout << "Will updated and encrypted successfully!\n";
 }
+
 
 
 void addMoreBeneficiaries() {
@@ -252,8 +306,6 @@ void showHomePage() {
         }
     } while (choice != 6);
 }
-
-
 
 int main(int argc, char* argv[]) {
     if (argc < 2 || argc > 3) {

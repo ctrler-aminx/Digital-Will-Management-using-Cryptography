@@ -254,7 +254,8 @@ string readFromFile(const string &filePath) {
 }
 
 // Extract Public Key from File (Ignore Everything Before Second '|')
-string extractPublicKey(const string &filePath) {
+string extractPublicKey(const string &filePath, int x) {
+    std::string base64Key;
     string fileContent = readFromFile(filePath);
     if (fileContent.empty()) {
         cerr << "Error: Public key file is empty or not found." << endl;
@@ -267,7 +268,10 @@ string extractPublicKey(const string &filePath) {
         cerr << "Error: Invalid public key format (missing '|')." << endl;
         return "";
     }
-
+    if(x==1){
+    base64Key = fileContent.substr(firstPipe + 1);
+    }
+    else{
     size_t secondPipe = fileContent.find('|', firstPipe + 1);
     if (secondPipe == string::npos) {
         cerr << "Error: Invalid public key format (missing second '|')." << endl;
@@ -275,8 +279,8 @@ string extractPublicKey(const string &filePath) {
     }
 
     // Extract only the Base64-encoded key (everything after the second '|')
-    string base64Key = fileContent.substr(secondPipe + 1);
-
+    base64Key = fileContent.substr(secondPipe + 1);
+    }
     // Trim extra spaces or newlines
     base64Key.erase(remove(base64Key.begin(), base64Key.end(), '\n'), base64Key.end());
     base64Key.erase(remove(base64Key.begin(), base64Key.end(), '\r'), base64Key.end());
@@ -321,7 +325,7 @@ void displayTestatorDetails(const string &aadhaarNumber) {
     // Read user details
     string userInfo = readFromFile(testatorDir + "user.txt");
     string hashedAadhaar = readFromFile(testatorDir + "hashed_aadhar.txt");
-    string publicKey = extractPublicKey(testatorDir + "public_key.txt");
+    string publicKey = extractPublicKey(testatorDir + "public_key.txt",1);
 
     cout << "\n===== Testator Details =====\n";
     cout << "Aadhaar Number: " << aadhaarNumber << endl;
@@ -387,7 +391,7 @@ void createWill() {
             string name = entry->d_name;
             if (name != "." && name != "..") {  
                 string publicKeyPath = relativesDir + name + "/public_key.txt";
-                string publicKey = extractPublicKey(publicKeyPath);
+                string publicKey = extractPublicKey(publicKeyPath,0);
                 if (!publicKey.empty()) {
                     beneficiaries.push_back({name, publicKey});
                 } else {
@@ -433,12 +437,17 @@ void createWill() {
         formattedWill += "- " + p.first + " \u2192 " + p.second + "\n"; // Unicode arrow
     }
 
-    cout << "\nEnter additional will content: ";
-    cin.ignore(); // Ensure buffer is cleared before taking input
-    string willData;
-    getline(cin, willData);
+    cout << "\nEnter additional will content (type 'DONE' on a new line to finish):\n";
+    cin.ignore();  // Clear any leftover newline characters
+    
+    string willData, line;
+    while (true) {
+        getline(cin, line);
+        if (line == "DONE") break;  // Stop when the user types "DONE"
+        willData += line + "\n";  // Append new lines properly
+    }
+    
     formattedWill += "\nWill Content:\n" + willData;
-
     string willPath = "data/" + aadhaarNumber + "/will.txt";
     saveToFile(willPath, formattedWill);
     cout << "Will saved at: " << willPath << endl;

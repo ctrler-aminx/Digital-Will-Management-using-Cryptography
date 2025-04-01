@@ -99,6 +99,18 @@ void registerUser() {
     cout << name << ", you are registered successfully!\nYour Aadhar number is: " << aadhar << endl;
     cout << "Public key retrieved and stored successfully. Your Public key: \n";
     cout << publicKey << endl;
+// Create a status file for the testator and set it to "ALIVE"
+string statusFile = "data/" + aadhar + "/status.txt";
+ofstream statusStream(statusFile);
+if (statusStream) {
+    statusStream << "ALIVE";
+    statusStream.close();
+} else {
+    cout << "[ERROR] Could not create status file for testator!\n";
+}
+
+
+
 }
 
 // ======== Function to log in a user ========
@@ -113,6 +125,22 @@ void loginUser() {
     // Check if user directory exists
     if (!directoryExists(userDir)) {
         cout << "Login failed! User with Aadhar number " << aadhar << " is not registered.\n";
+        return;
+    }
+
+    string statusFile = userDir + "/status.txt";
+    ifstream statusStream(statusFile);
+    if (!statusStream) {
+        cout << "[ERROR] Status file missing! Cannot verify user status.\n";
+        return;
+    }
+
+    string status;
+    getline(statusStream, status);
+    statusStream.close();
+
+    if (status == "DECEASED") {
+        cout << "Permission Denied! The testator is deceased. You cannot log in.\n";
         return;
     }
 
@@ -149,8 +177,6 @@ void loginUser() {
         cout << "Login failed! Incorrect Aadhar number.\n";
     }
 }
-
-// ======== Function to log in a relative ========
 // ======== Function to log in a relative ========
 void loginRelative() {
     string testatorAadhar, relativeAadhar;
@@ -160,7 +186,25 @@ void loginRelative() {
     cout << "Enter Your Aadhar Number: ";
     getline(cin, relativeAadhar);
 
-    // Check if relative directory exists
+    // ======= Check if the testator is deceased before proceeding =======
+    string statusFile = "data/" + testatorAadhar + "/status.txt";
+    ifstream statusStream(statusFile);
+
+    if (!statusStream) {
+        cout << "[ERROR] Testator's status file not found! Cannot proceed.\n";
+        return;
+    }
+
+    string status;
+    getline(statusStream, status);
+    statusStream.close();
+
+    if (status != "DECEASED") {
+        cout << "Access Denied: The testator is still alive. You cannot access the will yet.\n";
+        return;
+    }
+
+    // ======= Check if relative is registered =======
     string relativeDir = "data/" + testatorAadhar + "/relatives/" + relativeAadhar;
     string hashedRelativePath = relativeDir + "/hashed_aadhar.txt";
 
@@ -180,13 +224,10 @@ void loginRelative() {
     if (hashedRelativeAadhar == storedHashedAadhar) {
         cout << "Login successful! Welcome, Relative " << relativeAadhar << "\n";
 
-
-    // ===== Launch home.cpp after successful relative login =====
-cout << "Redirecting to Relative Home Page...\n";
-string command = "./bin/home " + relativeAadhar + " relative";
-system(command.c_str());
-
-
+        // ===== Launch home.cpp after successful relative login =====
+        cout << "Redirecting to Relative Home Page...\n";
+        string command = "./bin/home " + relativeAadhar + " relative";
+        system(command.c_str());
     } else {
         cout << "Relative login failed! Incorrect credentials.\n";
     }
