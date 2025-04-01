@@ -1,0 +1,9 @@
+Aadhaar: 123456789008
+
+Properties Distribution:
+- lh → 123456789001
+- sdfdf → 123456789069
+- you → 123456789001
+
+Will Content:
+ love you

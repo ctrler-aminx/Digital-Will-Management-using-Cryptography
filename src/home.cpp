@@ -14,24 +14,19 @@
 #include "networking.h"
 #include <cstring>
 #include <sys/stat.h>
-
-
 string loggedInAadhar;
 #define CA_IP "127.0.0.1"   // CA runs on localhost for now
 #define CA_PORT 8081        // Port for CA communication
-
 using namespace std;
 
 bool directoryExists(const string& path) {
     struct stat info;
     return (stat(path.c_str(), &info) == 0 && (info.st_mode & S_IFDIR));
 }
-
 void createUserDirectory(const string& path) {
     string command = "mkdir -p " + path;
     system(command.c_str());
 }
-
 bool getPublicKeyFromCA(const string& aadhar, string& publicKey) {
     if (!requestPublicKeyFromCA(aadhar, publicKey)) {
         cerr << "CA connection failed. Could not retrieve public key.\n";
@@ -39,6 +34,7 @@ bool getPublicKeyFromCA(const string& aadhar, string& publicKey) {
     }
     return true;
 }
+
 
 void registerBeneficiaries(bool isNew = true) {
     int numRelatives;
@@ -85,21 +81,22 @@ void registerBeneficiaries(bool isNew = true) {
         hashFile << hashedAadhar;
         hashFile.close();
 
-        // Store public key
+        // Store public key with relative name and Aadhar
         string encodedPublicKey = base64Encode(publicKey);
         ofstream pubFile(relativeDirPath + "/public_key.txt");
         if (!pubFile) {
             cerr << "Error: Could not create public key file.\n";
             return;
         }
-        pubFile << relativeAadhar << "|" << encodedPublicKey << "\n";
+        pubFile << relativeName << "|" << relativeAadhar << "|" << encodedPublicKey << "\n";
         pubFile.close();
 
-        cout << "Beneficiary " << relativeName << " registered successfully. Public key stored securely.\n"<<endl;
-        cout<< "The Public Key received from CA of "<<relativeAadhar<<" is "<<endl;
-        cout<<publicKey<<endl;
+        cout << "Beneficiary " << relativeName << " registered successfully. Public key stored securely.\n" << endl;
+        cout << "The Public Key received from CA of " << relativeAadhar << " is " << endl;
+        cout << publicKey << endl;
     }
 }
+
 
 void createWill() {
     registerBeneficiaries();
@@ -107,30 +104,53 @@ void createWill() {
     system(("./bin/will " + loggedInAadhar).c_str());
 }
 
-void viewWill() {
-    string willFile = "data/" + loggedInAadhar + "/will.txt";
-    string keyFile = "data/" + loggedInAadhar + "/aes_key.txt";
-    string ivFile = "data/" + loggedInAadhar + "/aes_iv.txt";  // Add IV file
+void viewWill(bool isRelative = false) {
+    string testatorAadhar = loggedInAadhar;  // Default to logged-in user (testator)
+
+    if (isRelative) {
+        cout << "Enter the Aadhar number of the testator whose will you want to view: ";
+        cin >> testatorAadhar;
+        cin.ignore();
+    }
+
+    string willFile = "data/" + testatorAadhar + "/encrypted_will.txt";
+    string keyFile = "data/" + testatorAadhar + "/aes_key.txt";
+    string ivFile = "data/" + testatorAadhar + "/aes_iv.txt";  
+
+/*
+    string willfile = "data/" + testatorAadhar + "/will.txt";
+ifstream willstream(willfile);
+if (willstream) {
+    cout << "\n======= Plaintext Will Content =======\n";
+    cout << string((istreambuf_iterator<char>(willstream)), istreambuf_iterator<char>()) << endl;
+} else {
+    cout << "No will found at: " << willfile << endl;
+}
+*/
 
     ifstream willStream(willFile);
     ifstream keyStream(keyFile);
-    ifstream ivStream(ivFile);  // Open IV file
+    ifstream ivStream(ivFile);  
 
-    if (!willStream || !keyStream || !ivStream) {  // Check IV file as well
-        cout << "No will found. Please create a will first.\n";
+    if (!willStream || !keyStream || !ivStream) {  
+        cout << "No will found for Aadhar: " << testatorAadhar << ". Please check the Aadhar number.\n";
         return;
     }
 
     string encryptedWill, aesKey, aesIv;
-    getline(willStream, encryptedWill);
+    stringstream buffer;
+buffer << willStream.rdbuf();
+encryptedWill = buffer.str();
     getline(keyStream, aesKey);
-    getline(ivStream, aesIv);  // Read IV
+    getline(ivStream, aesIv);  
 
     string decryptedWill = decryptAES(encryptedWill, (const unsigned char*)aesKey.c_str(), (const unsigned char*)aesIv.c_str());
+    
 
     cout << "\n======= Decrypted Will Content =======\n";
     cout << decryptedWill << "\n";
 }
+
 
 void editWill() {
     string willFile = "data/" + loggedInAadhar + "/will.txt";
@@ -165,6 +185,29 @@ void editWill() {
 
 void addMoreBeneficiaries() {
     registerBeneficiaries(false); 
+}
+
+void showRelativeHomePage() {
+    int choice;
+    do {
+        cout << "\n======= Digital Will Management System - Relative Home =======\n";
+        cout << "1. View Will\n";
+        cout << "2. Logout\n";
+        cout << "Enter your choice: ";
+        cin >> choice;
+        cin.ignore(); 
+
+        switch (choice) {
+        case 1:
+            viewWill(true);  // Only allow viewing the will
+            break;
+        case 2:
+            cout << "Logging out...\n";
+            return;  // Exit relative mode
+        default:
+            cout << "Invalid choice! Please try again.\n";
+        }
+    } while (choice != 2);
 }
 
 void showHomePage() {
@@ -213,11 +256,21 @@ void showHomePage() {
 
 
 int main(int argc, char* argv[]) {
-    if (argc != 2) {
-        cout << "Error: Aadhar number not provided to home.\n";
+    if (argc < 2 || argc > 3) {
+        cout << "Error: Invalid number of arguments.\n";
+        cout << "Usage: ./home <AadharNumber> [relative]\n";
         return 1;
     }
-    loggedInAadhar = argv[1]; 
-    showHomePage();
+
+    loggedInAadhar = argv[1];  // Aadhar of logged-in user
+
+    // Check if the third argument is 'relative'
+    bool isRelative = (argc == 3 && string(argv[2]) == "relative");
+
+    if (isRelative) {
+        showRelativeHomePage();  // Redirect to relative's home page
+    } else {
+        showHomePage();  // Default to testator's home page
+    }
     return 0;
 }

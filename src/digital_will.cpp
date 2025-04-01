@@ -151,6 +151,7 @@ void loginUser() {
 }
 
 // ======== Function to log in a relative ========
+// ======== Function to log in a relative ========
 void loginRelative() {
     string testatorAadhar, relativeAadhar;
     cout << "\n======= Relative Login =======\n";
@@ -159,37 +160,38 @@ void loginRelative() {
     cout << "Enter Your Aadhar Number: ";
     getline(cin, relativeAadhar);
 
-    string relativeDir = "data/" + testatorAadhar + "/relatives/" + relativeAadhar + ".txt";
+    // Check if relative directory exists
+    string relativeDir = "data/" + testatorAadhar + "/relatives/" + relativeAadhar;
+    string hashedRelativePath = relativeDir + "/hashed_aadhar.txt";
 
-    ifstream relativeFile(relativeDir);
+    ifstream relativeFile(hashedRelativePath);
     if (!relativeFile) {
         cout << "Relative login failed! No such relative registered for this testator.\n";
         return;
     }
 
-    string line, storedName, storedAadhar;
-    getline(relativeFile, line);
-    size_t pos = line.find("|");
-    storedName = line.substr(0, pos);
-    storedAadhar = line.substr(pos + 1);
+    string storedHashedAadhar;
+    getline(relativeFile, storedHashedAadhar);
     relativeFile.close();
 
-    // Hash and verify relative's Aadhar
+    // Hash the entered relative Aadhar
     string hashedRelativeAadhar = sha256(relativeAadhar);
-    string storedHashedAadhar = sha256(storedAadhar);
 
     if (hashedRelativeAadhar == storedHashedAadhar) {
-        cout << "Login successful! Welcome, " << storedName << "\n";
+        cout << "Login successful! Welcome, Relative " << relativeAadhar << "\n";
 
-        // ===== Launch home.cpp after successful login =====
-        cout << "Redirecting to Home Page...\n";
-        string command = "./bin/home " + relativeAadhar;
-        system(command.c_str());
+
+    // ===== Launch home.cpp after successful relative login =====
+cout << "Redirecting to Relative Home Page...\n";
+string command = "./bin/home " + relativeAadhar + " relative";
+system(command.c_str());
+
 
     } else {
         cout << "Relative login failed! Incorrect credentials.\n";
     }
 }
+
 
 // ======== Main Function ========
 int main() {
