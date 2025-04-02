@@ -10,13 +10,13 @@
 
 using namespace std;
 
-// ======== Helper function to check if directory exists ========
+
 bool directoryExists(const string& path) {
     struct stat info;
     return (stat(path.c_str(), &info) == 0 && (info.st_mode & S_IFDIR));
 }
 
-// ======== Helper function to create user directory ========
+
 void createUserDirectory(const string& path) {
     if (!directoryExists(path)) {
         string command = "mkdir -p " + path;
@@ -24,7 +24,7 @@ void createUserDirectory(const string& path) {
     }
 }
 
-// ======== Function to connect to CA and fetch public key ========
+
 bool getPublicKeyFromCA(const string& aadhar, string& publicKey) {
     if (!requestPublicKeyFromCA(aadhar, publicKey)) {
         cerr << "CA connection failed. Could not retrieve public key.\n";
@@ -33,7 +33,7 @@ bool getPublicKeyFromCA(const string& aadhar, string& publicKey) {
     return true;
 }
 
-// ======== Function to register a new user ========
+
 void registerUser() {
     string name, aadhar, relativeAadhar, relativeName;
     cout << "\n======= Digital Will Registration =======\n";
@@ -50,11 +50,10 @@ void registerUser() {
         return;
     }
 
-    // Hash and sign Aadhar number for secure verification
     string hashedAadhar = sha256(aadhar);
     string signedAadhar = signData(hashedAadhar, "keys/private.pem");
 
-    // Encode signed data using Base64 before storing
+    
     string encodedSignedAadhar = base64Encode(signedAadhar);
 
     string publicKey;
@@ -63,13 +62,13 @@ void registerUser() {
         return; // Don't proceed if CA connection fails
     }
 
-    // ===== Move directory creation and file writing here =====
+    
     createUserDirectory(userDir);
 
-    // Encode the public key using Base64 before storing
+    
     string encodedPublicKey = base64Encode(publicKey);
 
-    // Store user data securely in the user's directory
+
     ofstream userFile(userDir + "/user.txt");
     if (!userFile) {
         cerr << "Error: Could not create user file.\n";
@@ -78,7 +77,7 @@ void registerUser() {
     userFile << name << "|" << aadhar << "|" << encodedSignedAadhar << "\n";
     userFile.close();
 
-    // Store hashed Aadhar for future login verification
+    
     ofstream hashFile(userDir + "/hashed_aadhar.txt");
     if (!hashFile) {
         cerr << "Error: Could not create hash file.\n";
@@ -99,7 +98,7 @@ void registerUser() {
     cout << name << ", you are registered successfully!\nYour Aadhar number is: " << aadhar << endl;
     cout << "Public key retrieved and stored successfully. Your Public key: \n";
     cout << publicKey << endl;
-// Create a status file for the testator and set it to "ALIVE"
+
 string statusFile = "data/" + aadhar + "/status.txt";
 ofstream statusStream(statusFile);
 if (statusStream) {
@@ -113,7 +112,7 @@ if (statusStream) {
 
 }
 
-// ======== Function to log in a user ========
+
 void loginUser() {
     string aadhar;
     cout << "\n======= Digital Will Login =======\n";
@@ -144,7 +143,7 @@ void loginUser() {
         return;
     }
 
-    // Hash the Aadhar number for verification
+    
     string hashedAadhar = sha256(aadhar);
 
     // Read stored hashed Aadhar from file
